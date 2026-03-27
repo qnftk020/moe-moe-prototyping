@@ -11,7 +11,7 @@ interface StructuredQuestion {
 }
 
 interface Props {
-  agent: "gemini" | "claude";
+  agent: "sonnet" | "claude";
   logs: LogEntry[];
   status: "running" | "idle" | "waiting";
   onSendMessage: (message: string) => void;
@@ -19,30 +19,30 @@ interface Props {
 }
 
 const PREFIX_COLORS: Record<string, string> = {
-  GEM: "text-[#2383e2]",
-  CLD: "text-[#d9730d]",
+  SNT: "text-[#2383e2]",
+  OPS: "text-[#d9730d]",
   SYS: "text-[#0f7b6c]",
   USR: "text-[#6940a5]",
   ERR: "text-[#e03e3e]",
 };
 
 const BADGE_CONFIG = {
-  gemini: {
+  sonnet: {
     emoji: "✨",
-    label: "Gemini",
+    label: "Sonnet",
     badgeClass: "bg-[#eae4f2] text-[#6940a5]",
-    name: "Client Agent",
+    name: "Planner (Sonnet)",
   },
   claude: {
     emoji: "⚡",
     label: "Claude",
     badgeClass: "bg-[#fbecdd] text-[#d9730d]",
-    name: "Coding Agent",
+    name: "Builder (Opus)",
   },
 };
 
 // Prefixes that should be grouped when consecutive
-const GROUPABLE = new Set(["GEM", "CLD"]);
+const GROUPABLE = new Set(["SNT", "OPS"]);
 const PREVIEW_LINES = 3;
 
 /** Group consecutive GEM/CLD lines into collapsible blocks */

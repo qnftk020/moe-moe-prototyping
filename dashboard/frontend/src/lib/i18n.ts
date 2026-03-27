@@ -3,9 +3,9 @@ export type Lang = "ko" | "en";
 export const translations = {
   ko: {
     title: "Auto App Generation",
-    subtitle: "Gemini CLI(기획/검토) + Claude Code CLI(구현/디버깅) 멀티 에이전트 파이프라인",
+    subtitle: "Claude Sonnet(기획/검토) + Claude Opus(구현/디버깅) 멀티 에이전트 파이프라인",
     inputPlaceholder: "어떤 앱을 만들고 싶으신가요? (예: 운동 기록 PWA, 가계부 앱...)",
-    inputHint: "Gemini가 프레임워크와 디자인 스타일을 질문합니다",
+    inputHint: "Sonnet이 프레임워크와 디자인 스타일을 질문합니다",
     generate: "Generate",
     running: "Running...",
     apiKeySetup: "API Key 설정",
@@ -43,9 +43,9 @@ export const translations = {
   },
   en: {
     title: "Auto App Generation",
-    subtitle: "Gemini CLI (Planning/Review) + Claude Code CLI (Build/Debug) Multi-Agent Pipeline",
+    subtitle: "Claude Sonnet (Planning/Review) + Claude Opus (Build/Debug) Multi-Agent Pipeline",
     inputPlaceholder: "What app would you like to build? (e.g. workout tracker PWA, budget app...)",
-    inputHint: "Gemini will ask about framework and design style",
+    inputHint: "Sonnet will ask about framework and design style",
     generate: "Generate",
     running: "Running...",
     apiKeySetup: "API Key Setup",

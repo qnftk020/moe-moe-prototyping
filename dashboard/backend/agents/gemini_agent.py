@@ -57,7 +57,7 @@ class GeminiAgent:
             self.is_running = True
         await self.on_log("SYS", "Gemini CLI 세션 시작됨")
 
-        cmd = [GEMINI_BIN, "-p", prompt]
+        cmd = [GEMINI_BIN, "-p", prompt, "-m", "gemini-2.5-flash"]
 
         try:
             self.process = await asyncio.create_subprocess_exec(
@@ -457,14 +457,16 @@ CLAUDE.md에 반드시 포함할 내용:
             agent = GeminiAgent(self.work_dir, self.on_log)
             return await agent.run_prompt(prompt, _internal=True)
 
-        # Run all 5 experts in parallel
+        # Run experts sequentially with delay (avoid 429 rate limit)
+        results = []
         for expert in experts:
             await self.on_log("GEM", f"[{expert['prefix']}] {expert['name']} 리뷰 시작")
-
-        results = await asyncio.gather(
-            *[run_expert(e) for e in experts],
-            return_exceptions=True,
-        )
+            try:
+                result = await run_expert(expert)
+                results.append(result)
+            except Exception as e:
+                results.append(e)
+            await asyncio.sleep(3)  # Rate limit delay
 
         # ── Parse & Integrate Results ──
         parsed_reviews: list[dict] = []

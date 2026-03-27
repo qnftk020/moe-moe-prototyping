@@ -8,6 +8,7 @@ as subprocesses and streams their output to the dashboard in real-time.
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import time
 from datetime import datetime
@@ -19,7 +20,8 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from agents import GeminiAgent, ClaudeAgent, StitchAgent
+from agents import ClaudeAgent, StitchAgent
+from agents.planner_agent import PlannerAgent
 from models import (
     Artifact,
     LogEntry,
@@ -75,7 +77,7 @@ socket_app = socketio.ASGIApp(sio, other_asgi_app=app)
 
 pipeline_state = PipelineState()
 artifacts: list[dict] = []
-gemini_agent: Optional[GeminiAgent] = None
+planner_agent: Optional[PlannerAgent] = None
 claude_agent: Optional[ClaudeAgent] = None
 current_task: Optional[asyncio.Task] = None
 current_project_dir: Optional[Path] = None  # Tracks current generated app directory
@@ -158,7 +160,7 @@ def _scan_dir(path: Path, depth: int = 0) -> list[dict]:
     return items
 
 
-def _make_gemini_log_callback(agent_name: str = "gemini"):
+def _make_sonnet_log_callback(agent_name: str = "sonnet"):
     async def callback(prefix: str, content: str):
         await emit_log(agent_name, prefix, content)
     return callback
@@ -175,7 +177,7 @@ def _make_claude_log_callback(agent_name: str = "claude"):
 # ---------------------------------------------------------------------------
 
 
-async def _moe_gate_implementation_ai(claude_md: str, gemini_agent) -> dict:
+async def _moe_gate_implementation_ai(claude_md: str, planner_agent) -> dict:
     """MoE Gating Phase: Use 3 Gemini instances in parallel to analyze
     project complexity across FE/BE/UI dimensions.
 
@@ -211,8 +213,7 @@ CLAUDE.md:
 
     async def analyze_domain(key: str, domain_desc: str) -> tuple[str, dict]:
         prompt = gating_prompt_template.format(domain=domain_desc, claude_md=claude_md[:3000])
-        from agents import GeminiAgent
-        agent = GeminiAgent(gemini_agent.work_dir, gemini_agent.on_log)
+        agent = PlannerAgent(planner_agent.work_dir, planner_agent.on_log)
         result = await agent.run_prompt(prompt, _internal=True)
 
         # Parse JSON
@@ -225,13 +226,17 @@ CLAUDE.md:
             pass
         return key, {"score": 5, "reasons": ["파싱 실패 — 기본값"], "key_tasks": []}
 
-    # Run 3 Gating Agents in parallel
-    await emit_log("gemini", "SYS", "MoE Gating Phase 시작 (3개 분석 에이전트 병렬 실행)")
+    # Run Gating Agents sequentially with delay (avoid 429 rate limit)
+    await emit_log("sonnet", "SYS", "MoE Gating Phase 시작 (3개 분석 에이전트 순차 실행)")
 
-    results = await asyncio.gather(
-        *[analyze_domain(k, v) for k, v in domains.items()],
-        return_exceptions=True,
-    )
+    results = []
+    for k, v in domains.items():
+        try:
+            result = await analyze_domain(k, v)
+            results.append(result)
+        except Exception as e:
+            results.append(e)
+        await asyncio.sleep(2)  # Rate limit delay
 
     gating: dict[str, dict] = {}
     for r in results:
@@ -258,7 +263,7 @@ CLAUDE.md:
         }
 
         emoji = "🔴" if score >= 7 else "🟡" if score >= 4 else "🟢"
-        await emit_log("gemini", "GEM",
+        await emit_log("sonnet", "SNT",
             f"[GATE-{key.upper()}] {emoji} 복잡도 {score}/10 → {mode} | {', '.join(reasons[:2])}")
 
     # Ensure at least FE is active
@@ -354,7 +359,7 @@ def _slugify(text: str) -> str:
 
 async def run_pipeline(prompt: str, project_name: Optional[str] = None, google_api_key: str = ""):
     """Execute the full 5-stage pipeline."""
-    global gemini_agent, claude_agent, pipeline_state, current_project_dir
+    global planner_agent, claude_agent, pipeline_state, current_project_dir
     global pipeline_start_time, step_start_times
 
     pipeline_start_time = time.time()
@@ -374,26 +379,26 @@ async def run_pipeline(prompt: str, project_name: Optional[str] = None, google_a
     current_project_dir = project_dir
     work_dir = str(project_dir)
 
-    await emit_log("gemini", "SYS", f"프로젝트 폴더: generated-app/{project_dir.name}/")
+    await emit_log("sonnet", "SYS", f"프로젝트 폴더: generated-app/{project_dir.name}/")
 
     async def on_gemini_question():
         """Called when Gemini is waiting for user input (legacy)."""
-        await emit_agent_status("gemini", "waiting")
-        await sio.emit("waiting_for_input", {"agent": "gemini"})
+        await emit_agent_status("sonnet", "waiting")
+        await sio.emit("waiting_for_input", {"agent": "sonnet"})
 
     async def on_gemini_question_structured(question_data: dict):
         """Send structured question with options to frontend."""
-        await emit_agent_status("gemini", "waiting")
+        await emit_agent_status("sonnet", "waiting")
         await sio.emit("structured_question", {
-            "agent": "gemini",
+            "agent": "sonnet",
             "id": question_data.get("id", ""),
             "text": question_data.get("text", ""),
             "options": question_data.get("options", []),
             "multi_select": question_data.get("multi_select", False),
         })
 
-    gemini_agent = GeminiAgent(
-        work_dir, _make_gemini_log_callback(),
+    planner_agent = PlannerAgent(
+        work_dir, _make_sonnet_log_callback(),
         on_question=on_gemini_question,
         on_question_structured=on_gemini_question_structured,
     )
@@ -404,48 +409,48 @@ async def run_pipeline(prompt: str, project_name: Optional[str] = None, google_a
         step_start_times["envisioning_start"] = time.time()
         pipeline_state.advance_to(PipelineStep.ENVISIONING)
         await emit_pipeline_state()
-        await emit_agent_status("gemini", "running")
+        await emit_agent_status("sonnet", "running")
 
-        spec = await gemini_agent.run_envisioning_interactive(prompt)
+        spec = await planner_agent.run_envisioning_interactive(prompt)
 
         step_start_times["envisioning"] = time.time() - step_start_times.pop("envisioning_start")
-        await emit_agent_status("gemini", "idle")
+        await emit_agent_status("sonnet", "idle")
         await emit_artifact({
             "title": "spec.md — 프로젝트 기획서",
             "description": "Gemini가 생성한 요구사항 명세서",
             "file_path": "docs/01-planning/spec.md",
             "size": f"{len(spec.encode('utf-8')) / 1024:.1f} KB",
             "created_at": datetime.now().strftime("%H:%M"),
-            "created_by": "gemini",
+            "created_by": "sonnet",
             "icon_type": "md",
         })
 
         if not spec.strip():
-            await emit_log("gemini", "ERR", "기획서 생성 실패 — 파이프라인 중단")
+            await emit_log("sonnet", "ERR", "기획서 생성 실패 — 파이프라인 중단")
             return
 
         # ── Stage 2: Blueprinting ──
         step_start_times["blueprinting_start"] = time.time()
         pipeline_state.advance_to(PipelineStep.BLUEPRINTING)
         await emit_pipeline_state()
-        await emit_agent_status("gemini", "running")
+        await emit_agent_status("sonnet", "running")
 
-        claude_md = await gemini_agent.run_blueprinting(spec)
+        claude_md = await planner_agent.run_blueprinting(spec)
 
         step_start_times["blueprinting"] = time.time() - step_start_times.pop("blueprinting_start")
-        await emit_agent_status("gemini", "idle")
+        await emit_agent_status("sonnet", "idle")
         await emit_artifact({
             "title": "CLAUDE.md — 작업 지침서",
             "description": "Claude Code가 참조할 구현 가이드",
             "file_path": "CLAUDE.md",
             "size": f"{len(claude_md.encode('utf-8')) / 1024:.1f} KB",
             "created_at": datetime.now().strftime("%H:%M"),
-            "created_by": "gemini",
+            "created_by": "sonnet",
             "icon_type": "md",
         })
 
         if not claude_md.strip():
-            await emit_log("gemini", "ERR", "CLAUDE.md 생성 실패 — 파이프라인 중단")
+            await emit_log("sonnet", "ERR", "CLAUDE.md 생성 실패 — 파이프라인 중단")
             return
 
         # ── Stage 3: Implementation ──
@@ -477,7 +482,7 @@ async def run_pipeline(prompt: str, project_name: Optional[str] = None, google_a
             await emit_log("claude", prefix, f"[{tag}] {content}")
 
         # ── MoE Gating Phase: AI analyzes complexity ──
-        gating = await _moe_gate_implementation_ai(claude_md, gemini_agent)
+        gating = await _moe_gate_implementation_ai(claude_md, planner_agent)
 
         active_agents = [k for k, v in gating.items() if v.get("active")]
         if not active_agents:
@@ -487,9 +492,9 @@ async def run_pipeline(prompt: str, project_name: Optional[str] = None, google_a
         stitch_api_key = os.environ.get("STITCH_API_KEY", "")
         if "ui" in active_agents and stitch_api_key:
             active_agents = [a for a in active_agents if a != "ui"]  # Remove Claude UI agent
-            await emit_log("gemini", "SYS", "Stitch 2.0으로 UI 디자인 생성 중...")
+            await emit_log("sonnet", "SYS", "Stitch 2.0으로 UI 디자인 생성 중...")
 
-            stitch = StitchAgent(work_dir, _make_gemini_log_callback(), api_key=stitch_api_key)
+            stitch = StitchAgent(work_dir, _make_sonnet_log_callback(), api_key=stitch_api_key)
 
             # Extract screen names from CLAUDE.md
             screen_names = []
@@ -512,7 +517,7 @@ async def run_pipeline(prompt: str, project_name: Optional[str] = None, google_a
                 "file_path": "stitch-design-guide.json",
                 "size": f"{len(json.dumps(design_result).encode('utf-8')) / 1024:.1f} KB",
                 "created_at": datetime.now().strftime("%H:%M"),
-                "created_by": "gemini",
+                "created_by": "sonnet",
                 "icon_type": "review",
             })
 
@@ -537,7 +542,7 @@ async def run_pipeline(prompt: str, project_name: Optional[str] = None, google_a
         # ── Stage 4: Review ──
         pipeline_state.advance_to(PipelineStep.REVIEW)
         await emit_pipeline_state()
-        await emit_agent_status("gemini", "running")
+        await emit_agent_status("sonnet", "running")
 
         # Gather code summary for review
         code_files = []
@@ -557,21 +562,21 @@ async def run_pipeline(prompt: str, project_name: Optional[str] = None, google_a
 
         # MoE Gating for review: select experts based on code content
         active_experts = _moe_gate_review(code_summary)
-        await emit_log("gemini", "SYS",
+        await emit_log("sonnet", "SYS",
             f"MoE Gating → 활성 전문가: {[e['prefix'] for e in active_experts]} ({len(active_experts)}명)")
 
         step_start_times["review_start"] = time.time()
-        review = await gemini_agent.run_review_moe(code_summary, experts=active_experts)
+        review = await planner_agent.run_review_moe(code_summary, experts=active_experts)
         step_start_times["review"] = time.time() - step_start_times.pop("review_start")
 
-        await emit_agent_status("gemini", "idle")
+        await emit_agent_status("sonnet", "idle")
         await emit_artifact({
             "title": "review.md — 코드 리뷰 리포트",
             "description": "Gemini의 코드 리뷰 결과",
             "file_path": "docs/04-reviews/review.md",
             "size": f"{len(review.encode('utf-8')) / 1024:.1f} KB",
             "created_at": datetime.now().strftime("%H:%M"),
-            "created_by": "gemini",
+            "created_by": "sonnet",
             "icon_type": "review",
         })
 
@@ -594,15 +599,15 @@ async def run_pipeline(prompt: str, project_name: Optional[str] = None, google_a
         await emit_pipeline_state()
 
         total_time = round(time.time() - pipeline_start_time) if pipeline_start_time else 0
-        await emit_log("gemini", "SYS", f"파이프라인 완료! (총 {total_time // 60}분 {total_time % 60}초)")
+        await emit_log("sonnet", "SYS", f"파이프라인 완료! (총 {total_time // 60}분 {total_time % 60}초)")
 
         # ── Auto-launch generated app on port 3001 ──
         await _auto_launch_app(project_dir)
 
     except asyncio.CancelledError:
-        await emit_log("gemini", "SYS", "파이프라인이 취소되었습니다.")
+        await emit_log("sonnet", "SYS", "파이프라인이 취소되었습니다.")
     except Exception as e:
-        await emit_log("gemini", "ERR", f"파이프라인 오류: {str(e)}")
+        await emit_log("sonnet", "ERR", f"파이프라인 오류: {str(e)}")
 
 
 app_process: Optional[asyncio.subprocess.Process] = None
@@ -628,7 +633,7 @@ async def _auto_launch_app(project_dir: Path):
     except Exception:
         pass
 
-    await emit_log("gemini", "SYS", "생성된 앱을 3001번 포트에 실행합니다...")
+    await emit_log("sonnet", "SYS", "생성된 앱을 3001번 포트에 실행합니다...")
 
     # Detect app type
     is_flutter = (project_dir / "pubspec.yaml").exists()
@@ -643,7 +648,7 @@ async def _auto_launch_app(project_dir: Path):
             # Flutter Web — build and serve
             web_dir = project_dir / "build" / "web"
             if not web_dir.exists():
-                await emit_log("gemini", "SYS", "Flutter Web 빌드 중...")
+                await emit_log("sonnet", "SYS", "Flutter Web 빌드 중...")
                 build = await asyncio.create_subprocess_exec(
                     "flutter", "build", "web",
                     cwd=str(project_dir),
@@ -659,7 +664,7 @@ async def _auto_launch_app(project_dir: Path):
                     stderr=asyncio.subprocess.DEVNULL,
                 )
             else:
-                await emit_log("gemini", "ERR", "Flutter Web 빌드 실패")
+                await emit_log("sonnet", "ERR", "Flutter Web 빌드 실패")
                 return
 
         elif has_flutter_frontend:
@@ -672,7 +677,7 @@ async def _auto_launch_app(project_dir: Path):
                     stderr=asyncio.subprocess.DEVNULL,
                 )
             else:
-                await emit_log("gemini", "ERR", "Flutter 빌드 폴더가 없습니다")
+                await emit_log("sonnet", "ERR", "Flutter 빌드 폴더가 없습니다")
                 return
 
         elif has_frontend_vite or has_vite:
@@ -699,7 +704,7 @@ async def _auto_launch_app(project_dir: Path):
             app_dir = project_dir / "frontend" if has_frontend_dir and not is_nextjs else project_dir
             # Install deps if needed
             if not (app_dir / "node_modules").exists():
-                await emit_log("gemini", "SYS", "npm install 중...")
+                await emit_log("sonnet", "SYS", "npm install 중...")
                 install = await asyncio.create_subprocess_exec(
                     "npm", "install",
                     cwd=str(app_dir),
@@ -708,7 +713,7 @@ async def _auto_launch_app(project_dir: Path):
                 )
                 await install.wait()
             # Build
-            await emit_log("gemini", "SYS", "Next.js 빌드 중...")
+            await emit_log("sonnet", "SYS", "Next.js 빌드 중...")
             build = await asyncio.create_subprocess_exec(
                 "npx", "next", "build",
                 cwd=str(app_dir),
@@ -736,15 +741,15 @@ async def _auto_launch_app(project_dir: Path):
                     )
                     break
             else:
-                await emit_log("gemini", "SYS", "자동 실행 가능한 앱 형태를 감지하지 못했습니다")
+                await emit_log("sonnet", "SYS", "자동 실행 가능한 앱 형태를 감지하지 못했습니다")
                 return
 
         await asyncio.sleep(3)
-        await emit_log("gemini", "SYS", "앱이 http://localhost:3001 에서 실행 중입니다!")
+        await emit_log("sonnet", "SYS", "앱이 http://localhost:3001 에서 실행 중입니다!")
         await sio.emit("app_launched", {"url": "http://localhost:3001"})
 
     except Exception as e:
-        await emit_log("gemini", "ERR", f"앱 실행 오류: {str(e)}")
+        await emit_log("sonnet", "ERR", f"앱 실행 오류: {str(e)}")
 
 
 # ---------------------------------------------------------------------------
@@ -754,7 +759,7 @@ async def _auto_launch_app(project_dir: Path):
 
 @app.get("/api/health")
 async def health():
-    return {"status": "ok", "gemini": gemini_agent is not None and gemini_agent.is_running, "claude": claude_agent is not None and claude_agent.is_running}
+    return {"status": "ok", "sonnet": planner_agent is not None and planner_agent.is_running, "claude": claude_agent is not None and claude_agent.is_running}
 
 
 @app.get("/api/pipeline")
@@ -799,8 +804,8 @@ async def stop_pipeline():
     global current_task
     if current_task and not current_task.done():
         current_task.cancel()
-    if gemini_agent:
-        await gemini_agent.stop()
+    if planner_agent:
+        await planner_agent.stop()
     if claude_agent:
         await claude_agent.stop()
     return {"status": "stopped"}
@@ -871,7 +876,12 @@ async def deploy_app():
 @sio.event
 async def connect(sid, environ):
     print(f"Client connected: {sid}")
-    await sio.emit("pipeline_state", pipeline_state.model_dump(), to=sid)
+    # If pipeline is not actively running, send clean initial state
+    is_active = any(v == "active" for v in pipeline_state.steps.values())
+    if is_active:
+        await sio.emit("pipeline_state", pipeline_state.model_dump(), to=sid)
+    else:
+        await sio.emit("pipeline_state", PipelineState().model_dump(), to=sid)
     await sio.emit("artifacts_list", artifacts, to=sid)
     scan_path = current_project_dir if current_project_dir else GENERATED_APP_DIR
     tree = _scan_dir(scan_path)
@@ -901,7 +911,7 @@ async def start_pipeline(sid, data):
             "timestamp": datetime.now().strftime("%H:%M:%S"),
             "prefix": "ERR",
             "content": "프롬프트가 비어 있습니다.",
-            "agent": "gemini",
+            "agent": "sonnet",
         }, to=sid)
         return
 
@@ -917,17 +927,17 @@ async def send_to_agent(sid, data):
     if not message:
         return
 
-    if agent_name == "gemini" and gemini_agent:
+    if agent_name == "sonnet" and planner_agent:
         # Check if Gemini is waiting for a Q&A answer
-        if gemini_agent._user_response and not gemini_agent._user_response.done():
+        if planner_agent._user_response and not planner_agent._user_response.done():
             # Don't log USR here — run_envisioning_interactive will log it
-            await gemini_agent.send_user_response(message)
-            await emit_agent_status("gemini", "running")
+            await planner_agent.send_user_response(message)
+            await emit_agent_status("sonnet", "running")
         else:
             await emit_log(agent_name, "USR", message)
-            await emit_agent_status("gemini", "running")
-            result = await gemini_agent.run_prompt(message)
-            await emit_agent_status("gemini", "idle")
+            await emit_agent_status("sonnet", "running")
+            result = await planner_agent.run_prompt(message)
+            await emit_agent_status("sonnet", "idle")
     elif agent_name == "claude" and claude_agent:
         await emit_log(agent_name, "USR", message)
         await emit_agent_status("claude", "running")

@@ -96,7 +96,7 @@ class ClaudeAgent:
             data = json.loads(line)
         except json.JSONDecodeError:
             if line.strip():
-                await self.on_log("CLD", line)
+                await self.on_log("OPS", line)
                 result_collector.append(line)
             return
 
@@ -122,7 +122,7 @@ class ClaudeAgent:
                             for text_line in text.split("\n"):
                                 stripped = text_line.strip()
                                 if stripped:
-                                    await self.on_log("CLD", stripped)
+                                    await self.on_log("OPS", stripped)
                                     result_collector.append(stripped)
 
                     elif block_type == "tool_use":

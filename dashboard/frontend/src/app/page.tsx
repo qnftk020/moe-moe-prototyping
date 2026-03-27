@@ -36,9 +36,9 @@ export default function Home() {
   const [connected, setConnected] = useState(false);
   const [pipelineState, setPipelineState] =
     useState<PipelineState>(DEFAULT_PIPELINE);
-  const [geminiLogs, setGeminiLogs] = useState<LogEntry[]>([]);
+  const [sonnetLogs, setSonnetLogs] = useState<LogEntry[]>([]);
   const [claudeLogs, setClaudeLogs] = useState<LogEntry[]>([]);
-  const [geminiStatus, setGeminiStatus] = useState<"running" | "idle" | "waiting">("idle");
+  const [sonnetStatus, setSonnetStatus] = useState<"running" | "idle" | "waiting">("idle");
   const [claudeStatus, setClaudeStatus] = useState<"running" | "idle" | "waiting">("idle");
   const [fileTree, setFileTree] = useState<FileNode[]>([]);
   const [artifacts, setArtifacts] = useState<Artifact[]>([]);
@@ -64,20 +64,20 @@ export default function Home() {
     });
 
     socket.on("log", (entry: LogEntry) => {
-      if (entry.agent === "gemini") {
-        setGeminiLogs((prev) => [...prev, entry]);
+      if (entry.agent === "sonnet") {
+        setSonnetLogs((prev) => [...prev, entry]);
       } else {
         setClaudeLogs((prev) => [...prev, entry]);
       }
     });
 
     socket.on("agent_status", (data: AgentStatus) => {
-      if (data.agent === "gemini") setGeminiStatus(data.status as "running" | "idle" | "waiting");
+      if (data.agent === "sonnet") setSonnetStatus(data.status as "running" | "idle" | "waiting");
       else setClaudeStatus(data.status as "running" | "idle" | "waiting");
     });
 
     socket.on("waiting_for_input", (data: { agent: string }) => {
-      if (data.agent === "gemini") setGeminiStatus("waiting");
+      if (data.agent === "sonnet") setSonnetStatus("waiting");
       else setClaudeStatus("waiting");
     });
 
@@ -88,8 +88,8 @@ export default function Home() {
       options: string[];
       multi_select: boolean;
     }) => {
-      if (data.agent === "gemini") {
-        setGeminiStatus("waiting");
+      if (data.agent === "sonnet") {
+        setSonnetStatus("waiting");
         setCurrentQuestion(data);
       }
     });
@@ -123,7 +123,7 @@ export default function Home() {
 
   const handleStart = useCallback((prompt: string, googleApiKey?: string) => {
     const socket = getSocket();
-    setGeminiLogs([]);
+    setSonnetLogs([]);
     setClaudeLogs([]);
     setArtifacts([]);
     setFileTree([]);
@@ -137,13 +137,13 @@ export default function Home() {
     const socket = getSocket();
     socket.emit("stop");
     setIsRunning(false);
-    setGeminiStatus("idle");
+    setSonnetStatus("idle");
     setClaudeStatus("idle");
   }, []);
 
-  const handleSendToGemini = useCallback((message: string) => {
+  const handleSendToSonnet = useCallback((message: string) => {
     const socket = getSocket();
-    socket.emit("send_to_agent", { agent: "gemini", message });
+    socket.emit("send_to_agent", { agent: "sonnet", message });
     setCurrentQuestion(null);  // Clear question after answering
   }, []);
 
@@ -179,10 +179,10 @@ export default function Home() {
         {/* Agent Panels — fill remaining height, each panel scrolls independently */}
         <div className="flex-1 grid grid-cols-1 md:grid-cols-2 gap-3 mb-3 min-h-0 overflow-hidden">
           <AgentPanel
-            agent="gemini"
-            logs={geminiLogs}
-            status={geminiStatus}
-            onSendMessage={handleSendToGemini}
+            agent="sonnet"
+            logs={sonnetLogs}
+            status={sonnetStatus}
+            onSendMessage={handleSendToSonnet}
             structuredQuestion={currentQuestion}
           />
           <AgentPanel

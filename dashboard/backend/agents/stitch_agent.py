@@ -31,26 +31,9 @@ class StitchAgent:
         await self.on_log("SYS", "Stitch 2.0 UI 디자인 생성 시작")
 
         try:
-            # Create a Stitch project via MCP tool
-            prompt = f"""Create a UI design for: {app_description}
-
-Screens to generate:
-{chr(10).join(f'- {s}' for s in screen_descriptions[:5])}
-
-Design should be modern, production-ready, and responsive."""
-
-            # Use stitch-mcp tool to create screens
-            result = await self._run_stitch_tool("create_project", {
-                "name": app_description[:50],
-                "description": prompt,
-            })
-
-            if not result:
-                await self.on_log("SYS", "Stitch 프로젝트 생성 — 직접 프롬프트 모드로 전환")
-                # Fallback: generate via prompt
-                result = await self._generate_via_prompt(app_description, screen_descriptions)
-
-            await self.on_log("SYS", f"Stitch 디자인 생성 완료")
+            # Generate design guide for FE Agent to follow
+            result = await self._generate_via_prompt(app_description, screen_descriptions)
+            await self.on_log("SYS", "Stitch 디자인 가이드 생성 완료")
             return result
 
         except Exception as e:

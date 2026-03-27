@@ -24,8 +24,8 @@ class PipelineStep(str, Enum):
 
 
 class LogPrefix(str, Enum):
-    GEMINI = "GEM"
-    CLAUDE = "CLD"
+    SONNET = "SNT"
+    OPUS = "OPS"
     SYSTEM = "SYS"
     USER = "USR"
     ERROR = "ERR"
@@ -58,7 +58,7 @@ class LogEntry(BaseModel):
     timestamp: str = Field(default_factory=lambda: datetime.now().strftime("%H:%M:%S"))
     prefix: LogPrefix
     content: str
-    agent: str  # "gemini" or "claude"
+    agent: str  # "sonnet" or "claude"
 
 
 class StartRequest(BaseModel):
@@ -67,7 +67,7 @@ class StartRequest(BaseModel):
 
 
 class AgentMessage(BaseModel):
-    agent: str  # "gemini" or "claude"
+    agent: str  # "sonnet" or "claude"
     message: str
 
 
@@ -84,5 +84,5 @@ class Artifact(BaseModel):
     file_path: str
     size: str
     created_at: str
-    created_by: str  # "gemini" or "claude"
+    created_by: str  # "sonnet" or "claude"
     icon_type: str = "code"  # "md", "code", "review"

@@ -19,7 +19,7 @@ const ICON_EMOJI: Record<string, string> = {
 };
 
 const TAG_STYLE: Record<string, string> = {
-  gemini: "bg-[#eae4f2] text-[#6940a5]",
+  sonnet: "bg-[#eae4f2] text-[#6940a5]",
   claude: "bg-[#fbecdd] text-[#d9730d]",
 };
 
@@ -64,7 +64,7 @@ export default function SharedArtifacts({ artifacts }: Props) {
                   TAG_STYLE[artifact.created_by] || ""
                 }`}
               >
-                {artifact.created_by === "gemini" ? "Gemini" : "Claude"}
+                {artifact.created_by === "sonnet" ? "Sonnet" : "Opus"}
               </span>
             </div>
           ))

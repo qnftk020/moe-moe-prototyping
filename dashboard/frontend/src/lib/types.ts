@@ -12,13 +12,13 @@ export interface PipelineState {
   steps: Record<PipelineStepName, StepStatus>;
 }
 
-export type LogPrefix = "GEM" | "CLD" | "SYS" | "USR" | "ERR";
+export type LogPrefix = "SNT" | "OPS" | "SYS" | "USR" | "ERR";
 
 export interface LogEntry {
   timestamp: string;
   prefix: LogPrefix;
   content: string;
-  agent: "gemini" | "claude";
+  agent: "sonnet" | "claude";
 }
 
 export interface FileNode {
@@ -34,12 +34,12 @@ export interface Artifact {
   file_path: string;
   size: string;
   created_at: string;
-  created_by: "gemini" | "claude";
+  created_by: "sonnet" | "claude";
   icon_type: "md" | "code" | "review";
 }
 
 export interface AgentStatus {
-  agent: "gemini" | "claude";
+  agent: "sonnet" | "claude";
   status: "running" | "idle" | "waiting";
 }
 
